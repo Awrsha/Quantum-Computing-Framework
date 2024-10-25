@@ -1,0 +1,19 @@
+# Quantum Computing Libraries
+qiskit==0.39.0  # For quantum circuit simulation and algorithms
+pennylane==0.27.0  # For quantum machine learning
+cirq==0.15.0  # For creating and manipulating quantum circuits
+quantum-gate==0.1.0  # Custom library for quantum gates (if applicable)
+
+# Performance Monitoring and Logging
+numpy==1.23.0  # For numerical operations
+pandas==1.5.0  # For data manipulation and analysis
+matplotlib==3.6.0  # For plotting graphs and visualization
+seaborn==0.12.0  # For statistical data visualization
+
+# Task Scheduling and Multithreading
+concurrent.futures==3.9.0  # For managing threads and parallel execution
+threadpoolctl==3.1.0  # For controlling threading in libraries like NumPy
+
+# Additional Utilities
+scipy==1.9.0  # For scientific computations
+networkx==2.6.0  # For creating and manipulating complex networks (like task graphs)
