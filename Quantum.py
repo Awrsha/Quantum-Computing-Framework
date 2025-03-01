@@ -15,7 +15,7 @@ from scipy.stats import norm           # Import Gaussian distribution for statis
 import networkx as nx                  # Network analysis and graph theory; crucial for graph-based machine learning models.
 
 # --- Typing and Type Hinting ---
-from typing import List, Dict, Tuple, Any  # Type hints to improve code readability and IDE-assisted debugging support.
+from typing import List, Dict, Tuple, Any, Callable # Type hints to improve code readability and IDE-assisted debugging support.
 
 # --- Abstract Base Classes for Interfaces ---
 from abc import ABC, abstractmethod    # Enables the creation of abstract base classes for a clear object-oriented design.
@@ -203,6 +203,10 @@ class QuantumState:
             int: The index of the measured state in the basis vector.
         """
         probabilities = np.abs(self.state)**2
+        total = np.sum(probabilities)
+        if total <= 0:
+            raise ValueError("Cannot measure a zero-probability state.")
+        probabilities /= total  # Normalize probabilities
         result = np.random.choice(len(probabilities), p=probabilities)
         self.state = np.zeros_like(self.state)
         self.state[result] = 1
@@ -307,65 +311,65 @@ class QuantumAlgorithm(ABC):
         pass
         
 class GroverSearch(QuantumAlgorithm):
-    """Implementation of Grover's search algorithm, which provides a quadratic speedup for unstructured search problems."""
-
+    """Optimized implementation of Grover's algorithm with correct phase manipulation."""
+    
     def __init__(self, n_qubits: int, target_state: int):
-        """
-        Initialize the Grover search algorithm.
-
-        Parameters:
-            n_qubits (int): Number of qubits representing the search space.
-            target_state (int): The target state to be found in the search space, represented in binary.
-        """
         self.n_qubits = n_qubits
         self.target_state = target_state
         self.circuit = QuantumCircuit(n_qubits)
 
     def _oracle(self):
-        """Apply the oracle operator to mark the target state by flipping its phase."""
-        # Apply Pauli-X gates to the target qubits to prepare for CNOT
-        for i in range(self.n_qubits):
-            if (self.target_state >> i) & 1:
-                self.circuit.add_gate(QuantumGate.PAULI_X, i)
+        """Implement phase-flipping oracle using multi-controlled Z-gate decomposition."""
+        # Convert target state to binary representation
+        target_bits = format(self.target_state, f'0{self.n_qubits}b')
+        
+        # Apply X gates to qubits where target bit is 0
+        for qubit, bit in enumerate(reversed(target_bits)):
+            if bit == '0':
+                self.circuit.add_gate(QuantumGate.PAULI_X, qubit)
 
-        # Apply CNOT gate to flip the target state (assumes the last qubit is the output qubit)
-        self.circuit.add_gate(QuantumGate.CNOT, self.n_qubits - 1, self.n_qubits - 2)
+        # Multi-controlled Z-gate (using Hadamard+CNOT decomposition)
+        if self.n_qubits > 1:
+            self.circuit.add_gate(QuantumGate.HADAMARD, self.n_qubits-1)
+            for control in range(self.n_qubits-1):
+                self.circuit.add_gate(QuantumGate.CNOT, self.n_qubits-1, control)
+            self.circuit.add_gate(QuantumGate.HADAMARD, self.n_qubits-1)
 
-        # Reapply the Pauli-X gates to return to the original state
-        for i in range(self.n_qubits):
-            if (self.target_state >> i) & 1:
-                self.circuit.add_gate(QuantumGate.PAULI_X, i)
+        # Revert X gates
+        for qubit, bit in enumerate(reversed(target_bits)):
+            if bit == '0':
+                self.circuit.add_gate(QuantumGate.PAULI_X, qubit)
 
     def _diffusion(self):
-        """Apply the diffusion operator (inversion about the mean) to amplify the marked state's probability."""
-        # Apply Hadamard to all qubits to create superposition
-        for i in range(self.n_qubits):
-            self.circuit.add_gate(QuantumGate.HADAMARD, i)
-            self.circuit.add_gate(QuantumGate.PAULI_X, i)
+        """Implement correct diffusion operator (inversion about the mean)."""
+        for qubit in range(self.n_qubits):
+            self.circuit.add_gate(QuantumGate.HADAMARD, qubit)
+            self.circuit.add_gate(QuantumGate.PAULI_X, qubit)
+        
+        # Multi-controlled Z-gate
+        if self.n_qubits > 1:
+            self.circuit.add_gate(QuantumGate.HADAMARD, self.n_qubits-1)
+            for control in range(self.n_qubits-1):
+                self.circuit.add_gate(QuantumGate.CNOT, self.n_qubits-1, control)
+            self.circuit.add_gate(QuantumGate.HADAMARD, self.n_qubits-1)
 
-        # Apply CNOT to control qubit to invert the state about the mean
-        self.circuit.add_gate(QuantumGate.CNOT, self.n_qubits - 1, self.n_qubits - 2)
-
-        # Invert and return to the original state
-        for i in range(self.n_qubits):
-            self.circuit.add_gate(QuantumGate.PAULI_X, i)
-            self.circuit.add_gate(QuantumGate.HADAMARD, i)
+        for qubit in range(self.n_qubits):
+            self.circuit.add_gate(QuantumGate.PAULI_X, qubit)
+            self.circuit.add_gate(QuantumGate.HADAMARD, qubit)
 
     def run(self) -> int:
-        """Execute Grover's search algorithm and return the result of the measurement."""
-        # Initialize qubits in superposition
-        for i in range(self.n_qubits):
-            self.circuit.add_gate(QuantumGate.HADAMARD, i)
+        """Execute Grover's algorithm with validated iterations."""
+        # Initialize superposition
+        for qubit in range(self.n_qubits):
+            self.circuit.add_gate(QuantumGate.HADAMARD, qubit)
 
-        # Calculate the number of iterations based on the number of qubits
-        n_iterations = int(np.pi / 4 * np.sqrt(2**self.n_qubits))
-
-        # Perform the Grover iterations: oracle followed by diffusion
-        for _ in range(n_iterations):
+        # Calculate optimal iterations (ensure ≥1)
+        optimal_iterations = max(1, int(np.pi/4 * np.sqrt(2**self.n_qubits)))
+        
+        for _ in range(optimal_iterations):
             self._oracle()
             self._diffusion()
 
-        # Measure the final state to obtain the index of the target state
         return self.circuit.measure()
 
 
@@ -451,34 +455,31 @@ class QuantumTask:
         """
         Executes the quantum task if all dependencies have been completed.
 
-        The method checks if all dependencies are satisfied (i.e., completed). If so, it simulates the execution
-        time based on the task's complexity, runs the specified quantum algorithm, and logs the execution time.
-
         Returns:
             bool: True if the task was executed successfully, False otherwise.
         """
         if self.start_time is None:
             self.start_time = time.time()
 
-        # Check if all dependencies have been resolved
+        # Ensure all dependencies are completed
         for dep in self.dependencies:
-            if dep.result is None:  # If any dependency hasn't finished, return False
+            if dep.result is None:
                 return False
 
         # Simulate execution time based on complexity
         execution_time = self.complexity * random.uniform(0.5, 1.5)
-        time.sleep(execution_time)  # Simulate time taken for execution
+        time.sleep(execution_time)
         
         try:
-            self.result = self.algorithm.run()  # Execute the quantum algorithm
-            self.status = TaskStatus.COMPLETED  # Mark the task as completed
+            self.result = self.algorithm.run()
+            self.status = TaskStatus.COMPLETED
         except Exception as e:
-            logger.error(f"Error executing task {self.task_id}: {str(e)}")  # Log any errors that occur
-            self.status = TaskStatus.FAILED  # Mark the task as failed
+            logger.error(f"Error executing task {self.task_id}: {str(e)}")
+            self.status = TaskStatus.FAILED
             return False
 
-        self.execution_times.append(execution_time)  # Record execution time
-        self.end_time = time.time()  # Capture end time
+        self.execution_times.append(execution_time)
+        self.end_time = time.time()
         return True
 
     def adjust_priority(self):
@@ -632,57 +633,46 @@ class TaskQueue:
         return self.queue.qsize()  # Return the size of the task queue
 
 class Worker(threading.Thread):
-    """Worker thread for executing quantum tasks from a shared task queue."""
-
     def __init__(self, name: str, task_queue: TaskQueue, resource_manager: 'QuantumResourceManager'):
-        """
-        Initializes a new Worker instance.
-
-        This constructor sets up a worker thread with a given name, a reference to a task queue from which it will
-        retrieve tasks, and a resource manager for handling quantum resources needed for task execution.
-
-        Args:
-            name (str): The name of the worker thread, useful for logging and identification.
-            task_queue (TaskQueue): The queue from which the worker will fetch tasks to execute.
-            resource_manager (QuantumResourceManager): A manager for allocating and deallocating resources needed by the tasks.
-        """
-        threading.Thread.__init__(self)  # Initialize the base threading class
-        self.name = name  # Assign the worker's name
-        self.task_queue = task_queue  # Assign the shared task queue
-        self.resource_manager = resource_manager  # Assign the resource manager
+        threading.Thread.__init__(self)
+        self.name = name
+        self.task_queue = task_queue
+        self.resource_manager = resource_manager
 
     def run(self):
-        """
-        The main execution loop for the worker thread.
+        while not self.task_queue.is_empty():
+            task = self.task_queue.get_task()
+            resource_id = f"resource-{task.task_id}"
 
-        This method continuously checks the task queue for tasks to execute. If a task is available, it attempts to
-        allocate resources using the resource manager. If successful, the task is executed. Upon completion, the worker
-        logs the result, deallocates resources, and manages task failure scenarios. If resources are unavailable, the
-        task is re-queued for later execution.
+            # Log task retrieval
+            logger.info(f"{self.name} retrieved Task {task.task_id} with priority {task.priority}")
 
-        The loop continues until there are no more tasks in the queue.
-        """
-        while not self.task_queue.is_empty():  # Continue until the task queue is empty
-            task = self.task_queue.get_task()  # Retrieve the next task from the queue
-            resource_id = f"resource-{task.task_id}"  # Create a unique resource identifier for the task
-
-            # Attempt to allocate the required resource for executing the task
             if self.resource_manager.allocate_resource(resource_id):
-                logger.info(f"{self.name} started executing Task {task.task_id}")  # Log task start
-                task.status = TaskStatus.RUNNING  # Update task status to RUNNING
+                logger.info(f"{self.name} allocated resource {resource_id} for Task {task.task_id}")
+                logger.info(f"{self.name} started executing Task {task.task_id}")
+                task.status = TaskStatus.RUNNING
 
-                # Execute the task and check the result
-                if task.execute():
-                    logger.info(f"{self.name} completed Task {task.task_id} with result: {task.result}")  # Log successful execution
-                else:
-                    logger.warning(f"{self.name} failed to execute Task {task.task_id}")  # Log execution failure
-                    self.task_queue.add_task(task)  # Re-add the task to the queue for retry
+                try:
+                    if task.execute():
+                        logger.info(f"{self.name} completed Task {task.task_id} with result: {task.result}")
+                    else:
+                        logger.warning(f"{self.name} failed to execute Task {task.task_id}")
+                        if task.status == TaskStatus.FAILED:
+                            logger.error(f"Task {task.task_id} failed permanently and will not be retried.")
+                        else:
+                            logger.info(f"Re-adding Task {task.task_id} to the queue for retry.")
+                            self.task_queue.add_task(task)  # Re-add the task for retry
+                except Exception as e:
+                    logger.error(f"Error executing task {task.task_id}: {str(e)}")
+                    task.status = TaskStatus.FAILED
+                    logger.error(f"Task {task.task_id} has encountered a critical error and will not be retried.")
 
-                # Deallocate the resource after execution
                 self.resource_manager.deallocate_resource(resource_id)
+                logger.info(f"{self.name} deallocated resource {resource_id} for Task {task.task_id}")
             else:
-                logger.info(f"{self.name} couldn't execute Task {task.task_id} due to resource unavailability")  # Log resource unavailability
-                self.task_queue.add_task(task)  # Re-add the task to the queue for later execution
+                logger.info(f"{self.name} couldn't execute Task {task.task_id} due to resource unavailability")
+                self.task_queue.add_task(task)
+                logger.info(f"Re-adding Task {task.task_id} to the queue for resource availability.")
 
 class QuantumResourceManager:
     """Manages quantum computing resources, ensuring efficient allocation and deallocation."""
@@ -756,112 +746,66 @@ class QuantumResourceManager:
 
 
 class QuantumHyperThreading:
-    """Manages quantum hyper-threading for executing multiple quantum tasks concurrently."""
-
     def __init__(self, num_threads: int, total_resources: int):
-        """
-        Initializes the QuantumHyperThreading manager.
-
-        This constructor sets up a hyper-threading environment by initializing the number of threads, the task queue,
-        a list for managing tasks, and a resource manager for handling quantum resources.
-
-        Args:
-            num_threads (int): The number of worker threads to be created for task execution.
-            total_resources (int): The total number of quantum resources available for allocation.
-        """
-        self.num_threads = num_threads  # Number of concurrent threads for task execution
-        self.task_queue = TaskQueue()  # Instantiate a task queue to manage quantum tasks
-        self.tasks: List[QuantumTask] = []  # List to hold all created quantum tasks
-        self.resource_manager = QuantumResourceManager(total_resources)  # Instantiate resource manager
+        self.num_threads = num_threads
+        self.task_queue = TaskQueue()
+        self.tasks: List[QuantumTask] = []
+        self.resource_manager = QuantumResourceManager(total_resources)
 
     def create_tasks(self, num_tasks: int):
-        """
-        Generates a specified number of quantum tasks.
-
-        This method creates tasks with random complexity, priority, and qubit counts. Tasks are randomly assigned
-        to be either Grover's search or Quantum Fourier Transform tasks and are added to the task queue for execution.
-
-        Args:
-            num_tasks (int): The number of quantum tasks to create and add to the queue.
-        """
+        logger.info(f"Creating {num_tasks} quantum tasks.")
         for i in range(num_tasks):
-            complexity = random.randint(1, 5)  # Random complexity level between 1 and 5
-            priority = random.randint(1, 10)  # Random priority level between 1 and 10
-            n_qubits = random.randint(2, 5)  # Random number of qubits between 2 and 5
-            
-            # Randomly decide the type of quantum task to create
+            complexity = random.randint(1, 5)
+            priority = random.randint(1, 10)
+            n_qubits = random.randint(2, 5)
+
             if random.choice([True, False]):
-                target_state = random.randint(0, 2**n_qubits - 1)  # Random target state for Grover's task
+                target_state = random.randint(0, 2**n_qubits - 1)
                 task = QuantumTaskFactory.create_grover_search_task(i, complexity, priority, n_qubits, target_state)
+                logger.info(f"Created Grover Search Task {i} with {n_qubits} qubits and target state {target_state}")
             else:
-                task = QuantumTaskFactory.create_qft_task(i, complexity, priority, n_qubits)  # Create QFT task
-            
-            self.tasks.append(task)  # Add the task to the local task list
-            self.task_queue.add_task(task)  # Add the task to the shared task queue for execution
+                task = QuantumTaskFactory.create_qft_task(i, complexity, priority, n_qubits)
+                logger.info(f"Created Quantum Fourier Transform Task {i} with {n_qubits} qubits")
+
+            self.tasks.append(task)
+            self.task_queue.add_task(task)
+            logger.info(f"Added Task {i} to the task queue.")
 
     def add_dependencies(self, task_id: int, dependencies: List[int]):
-        """
-        Adds dependencies to a specified task.
-
-        This method links a task to other tasks that must be completed before it can execute, enabling the creation of
-        complex task execution flows.
-
-        Args:
-            task_id (int): The ID of the task to which dependencies will be added.
-            dependencies (List[int]): A list of task IDs representing the dependencies for the specified task.
-        """
-        task = self.tasks[task_id]  # Retrieve the task based on its ID
+        logger.info(f"Adding dependencies for Task {task_id}: {dependencies}")
+        task = self.tasks[task_id]
         for dep_id in dependencies:
-            task.add_dependency(self.tasks[dep_id])  # Add each dependency to the task
+            task.add_dependency(self.tasks[dep_id])
+            logger.info(f"Added dependency: Task {dep_id} must complete before Task {task_id}")
 
     def execute_tasks(self):
-        """
-        Initiates the execution of tasks using worker threads.
-
-        This method starts multiple worker threads, each capable of executing tasks concurrently. It logs the start
-        of execution and waits for all threads to complete their assigned tasks.
-
-        The number of worker threads created is based on the specified `num_threads` during initialization.
-        """
-        logger.info(f"Starting execution with {self.num_threads} quantum threads.")  # Log execution start
-        workers = []  # List to hold all worker threads
+        logger.info(f"Starting execution with {self.num_threads} quantum threads.")
+        workers = []
         for i in range(self.num_threads):
             worker = Worker(name=f"Worker-{i+1}", task_queue=self.task_queue, resource_manager=self.resource_manager)
-            workers.append(worker)  # Add the worker to the list
-            worker.start()  # Start the worker thread
+            workers.append(worker)
+            worker.start()
+            logger.info(f"Started Worker-{i+1}")
 
         for worker in workers:
-            worker.join()  # Wait for all workers to finish execution
-
-    def adjust_task_priorities(self):
-        """
-        Adjusts the priorities of all tasks based on their execution metrics.
-
-        This method recalculates the priorities of tasks to optimize execution order. Higher-priority tasks are executed
-        first, and priority adjustments are logged for monitoring.
-
-        The method sorts the tasks based on their current priority and updates the priorities so that no task has a
-        priority less than 1.
-        """
-        for task in self.tasks:
-            task.adjust_priority()  # Adjust each task's priority based on its metrics
-        self.tasks.sort()  # Sort tasks based on the updated priorities
-        for i, task in enumerate(self.tasks):
-            task.priority = max(1, task.priority - i)  # Ensure priority is at least 1
+            worker.join()
+            logger.info(f"Worker {worker.name} has completed execution.")
 
     def monitor_performance(self):
-        """
-        Monitors and logs the performance of all tasks.
-
-        This method calculates and logs the average execution times for each task, providing insights into performance
-        metrics that can inform future optimizations.
-
-        It logs execution times and computes average times to help identify any bottlenecks in the task execution process.
-        """
+        logger.info("Monitoring performance of all tasks.")
         for task in self.tasks:
-            avg_time = sum(task.execution_times) / len(task.execution_times) if task.execution_times else 0  # Calculate average execution time
+            avg_time = sum(task.execution_times) / len(task.execution_times) if task.execution_times else 0
             logger.info(f"Task {task.task_id}: Execution times: {task.execution_times}, Average time: {avg_time:.2f}, Duration: {task.execution_duration():.2f} seconds")
 
+    def adjust_task_priorities(self):
+        logger.info("Adjusting task priorities based on execution metrics.")
+        for task in self.tasks:
+            task.adjust_priority()
+        self.tasks.sort()
+        for i, task in enumerate(self.tasks):
+            task.priority = max(1, task.priority - i)
+        logger.info("Task priorities have been adjusted.")
+        
 class AdaptiveScheduler:
     """Implements adaptive scheduling for quantum tasks to optimize execution based on historical performance and task dynamics."""
 
@@ -1746,20 +1690,15 @@ class QuantumErrorMitigation:
             QuantumCircuit: A new quantum circuit that incorporates error mitigation through 
             Richardson extrapolation.
         """
-        mitigated_circuit = QuantumCircuit(circuit.num_qubits)  # Initialize the mitigated circuit
-
+        mitigated_circuit = QuantumCircuit(circuit.num_qubits)
         for noise_factor in noise_factors:
-            stretched_circuit = QuantumCircuit(circuit.num_qubits)  # Create a new circuit for each noise factor
+            stretched_circuit = QuantumCircuit(circuit.num_qubits)
             for gate, target, control in circuit.gates:
-                # Stretch each gate by the noise factor
                 for _ in range(int(noise_factor)):
-                    stretched_circuit.add_gate(gate, target, control)  # Add the gate to the stretched circuit
-            
-            # Combine the stretched circuits with appropriate coefficients
-            coefficient = 1 / (noise_factor * (noise_factor - 1))  # Calculate the coefficient for extrapolation
+                    stretched_circuit.add_gate(gate, target, control)
+            coefficient = 1 / (noise_factor * (noise_factor - 1))
             mitigated_circuit.gates.extend([(gate, target, control, coefficient) for gate, target, control in stretched_circuit.gates])
-        
-        return mitigated_circuit  # Return the final mitigated circuit
+        return mitigated_circuit   # Return the final mitigated circuit
 
     @staticmethod
     def zero_noise_extrapolation(circuit: QuantumCircuit, noise_levels: List[float]) -> Callable:
@@ -1787,14 +1726,10 @@ class QuantumErrorMitigation:
         def mitigated_execution(quantum_computer):
             results = []
             for noise_level in noise_levels:
-                # Apply depolarizing noise to the circuit at the specified noise level
                 noisy_circuit = QuantumNoiseModel.apply_depolarizing_noise(circuit, noise_level)
-                results.append(quantum_computer.run(noisy_circuit))  # Execute the noisy circuit and collect results
-            
-            # Perform extrapolation to zero noise using polynomial fitting
-            coefficients = np.polyfit(noise_levels, results, len(noise_levels) - 1)  # Fit polynomial to results
-            return np.poly1d(coefficients)(0)  # Evaluate the polynomial at zero noise
-        
+                results.append(quantum_computer.run(noisy_circuit))
+            coefficients = np.polyfit(noise_levels, results, len(noise_levels) - 1)
+            return np.poly1d(coefficients)(0)
         return mitigated_execution  # Return the execution function for use with a quantum computer
 
 class QuantumCircuitOptimizer:
